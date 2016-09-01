@@ -10,6 +10,8 @@ from mouse import *
 from registration import *
 from scorer import *
 
+import ray
+
 """
 A Simulation object that can be used to represent an ongoing experiment. It can be rendered by setting render=True on construction. See the main method for an example.
 """
@@ -34,12 +36,26 @@ class Simulation(object):
             self.trajectory = [(np.cos(deg) * 150 + 300, np.sin(deg) * 150 + 300) for deg in [3.6 * np.pi * i / 180.0 for i in range(100)]]
 
 
+    @ray.remote([],[int])
     def update(self, iterations=-1):
         """
         Updates the state of the cloth. Iterations signifies the amount of time to spend to allow the cloth to equilibrate.
         """
         if iterations < 0:
             iterations = self.update_iterations
+
+        ret = sum([self.cloth.update() for _ in range(iterations)])
+        if self.render:
+            self.render_sim()
+        return ret
+
+    def updatea(self, iterations=-1):
+        """
+        Updates the state of the cloth. Iterations signifies the amount of time to spend to allow the cloth to equilibrate.
+        """
+        if iterations < 0:
+            iterations = self.update_iterations
+
         ret = sum([self.cloth.update() for _ in range(iterations)])
         if self.render:
             self.render_sim()
@@ -91,13 +107,13 @@ class Simulation(object):
                 if i % 10 == 0:
                     print str(i) + '/' + str(self.init)
             self.stored = copy.deepcopy(self.cloth)
-            self.update(0)
+            self.updatea(0)
         else:
             self.cloth = copy.deepcopy(self.stored)
             self.mouse = self.cloth.mouse
             self.tensioners = self.cloth.tensioners
             self.bounds = self.cloth.bounds
-            self.update(0)
+            self.updatea(0)
 
     def write_to_file(self, fname):
         """
@@ -123,7 +139,7 @@ class Simulation(object):
     #     """
     #     return copy.deepcopy(self)
 
-def load_simulation_from_config(fname="config_files/default.json", shape_fn=None, trajectory=None):
+def load_simulation_from_config(fname="config_files/default.json", shape_fn=None, trajectory=None, elasticity=1.0):
     """
     Creates a Simulation object from a configuration file FNAME, and can optionally take in a SHAPE_FN or create one from discrete points saved to file.
     """
@@ -135,12 +151,16 @@ def load_simulation_from_config(fname="config_files/default.json", shape_fn=None
     mouse = Mouse(mouse["x"], mouse["y"], mouse["z"], mouse["height_limit"], mouse["down"], mouse["button"], bounds, mouse["influence"], mouse["cut"])
     cloth = data["shapecloth"]
     if not shape_fn:
-        corners = load_robot_points(cloth["shape_fn"][0])
+        corners = load_robot_points(cloth["shape_fn"][0])        
         pts = load_robot_points(cloth["shape_fn"][1])
         shape_fn = get_shape_fn(corners, pts, True)
         trajectory = load_trajectory_from_config(fname)
+    
     cloth = ShapeCloth(shape_fn, mouse, cloth["width"], cloth["height"], cloth["dx"], cloth["dy"], 
         cloth["gravity"], cloth["elasticity"], cloth["pin_cond"], bounds)
+
+    cloth.elasticity = elasticity
+
     simulation = data["simulation"]
     return Simulation(cloth, simulation["init"], simulation["render"], simulation["update_iterations"], trajectory)
 
@@ -189,32 +209,23 @@ def write_trajectory_to_file(trajectory, fname):
 
 
 if __name__ == "__main__":
+    ray.init(start_ray_local=True, num_workers=10)
+
     if len(sys.argv) <= 1:
         shape_fn = lambda x, y: abs((x - 300) **2 + (y - 300) ** 2 - 150 **2) < 2000
     else:
         shape_fn=None
 
-    simulation = load_simulation_from_config(shape_fn=shape_fn)
+    simulation = [load_simulation_from_config(shape_fn=shape_fn, elasticity=5.0/r) for r in range(1,5)]
     scorer = Scorer(0)
-    simulation.reset()
+    for s in simulation:
+        s.reset()
 
-    print "Initial Score", scorer.score(simulation.cloth)
-
-    for i in range(len(simulation.trajectory)):
-        simulation.update()
-        simulation.move_mouse(simulation.trajectory[i][0], simulation.trajectory[i][1])
-
-    print "Score", scorer.score(simulation.cloth)
-    
-    simulation.reset()
-    pin_position, option = load_pin_from_config()
-    print pin_position
-    if pin_position:
-        simulation.pin_position(pin_position[0], pin_position[1], option)
-
-    for i in range(len(simulation.trajectory)):
-        simulation.update()
-        simulation.move_mouse(simulation.trajectory[i][0], simulation.trajectory[i][1])    
+    for i in range(len(simulation[0].trajectory)):
+        for s in simulation:
+            s.update.remote()
+        #simulation.update()
+        #simulation.move_mouse(simulation.trajectory[i][0], simulation.trajectory[i][1])
 
     print "Score", scorer.score(simulation.cloth)
 

@@ -18,6 +18,7 @@ class ShapeCloth(Cloth):
         self.normalpts = []
         self.tensioners = []
         self.bounds = bounds
+        self.elasticity = elasticity
         self.mouse = mouse
         self.allpts = {}
         if pin_cond == "default":
@@ -76,7 +77,7 @@ class ShapeCloth(Cloth):
         dx, dy = self.initial_params[1]
         shape_fn = self.initial_params[2]
         gravity = self.initial_params[3]
-        elasticity = self.initial_params[4]
+        elasticity = self.elasticity
         pin_cond = self.initial_params[5]
         self.pts = []
         self.shapepts = []
